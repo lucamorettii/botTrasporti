@@ -11,6 +11,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+from telegram.error import Conflict
 
 from src.bottrasporti.schedules import get_prossimo_bus
 from src.bottrasporti.viaggiatreno import get_partenze_realtime
@@ -261,6 +262,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await invia_scelta(query.message)
 
 
+async def error_handler(update, context):
+    if isinstance(context.error, Conflict):
+        logging.error(
+            "Polling Telegram gia attivo: arrestare le altre istanze del bot."
+        )
+        return
+    logging.error("Errore durante la gestione dell'aggiornamento", exc_info=context.error)
+
+
 if __name__ == "__main__":
     # Avvia il server web su un thread separato
     Thread(target=run_web, daemon=True).start()
@@ -269,6 +279,7 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_error_handler(error_handler)
 
     print("Bot avviato...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
