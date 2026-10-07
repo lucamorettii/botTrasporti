@@ -1,9 +1,11 @@
 import csv
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from threading import Thread
+
 from flask import Flask
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -64,10 +66,17 @@ def get_prossimo_bus(file_csv, ora_riferimento):
 
 
 def get_partenze_realtime(id_stazione):
-    ora_str = datetime.now().strftime("%a %b %d %Y %H:%M:%S")
+    ora_str = format_datetime(datetime.now(timezone.utc), usegmt=True)
     url = f"http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/{id_stazione}/{ora_str}"
     try:
-        res = requests.get(url, timeout=5)
+        res = requests.get(
+            url,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0",
+            },
+            timeout=5,
+        )
         res.raise_for_status()
         partenze = res.json()
         if isinstance(partenze, list):
