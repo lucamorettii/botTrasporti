@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 from threading import Thread
 from flask import Flask
 import pandas as pd
@@ -37,17 +38,29 @@ logging.basicConfig(
 STAZIONE_BERGAMO = "S01701"
 STAZIONE_GRECO = "S01645"
 STAZIONE_ALBANO = "S01702"
+BASE_DIR = Path(__file__).resolve().parent
 
 
 def get_prossimo_bus(file_csv, ora_riferimento):
     try:
-        df = pd.read_csv(file_csv)
-        df_disponibili = df[df["partenza"] >= ora_riferimento]
+        csv_path = BASE_DIR / file_csv
+        df = pd.read_csv(csv_path, dtype=str)
+        required_columns = {"partenza", "arrivo"}
+        if not required_columns.issubset(df.columns):
+            missing = ", ".join(sorted(required_columns - set(df.columns)))
+            raise ValueError(f"colonne mancanti: {missing}")
+
+        df["partenza"] = df["partenza"].str.strip()
+        df["arrivo"] = df["arrivo"].str.strip()
+        df_disponibili = df[
+            (df["partenza"] >= ora_riferimento)
+            & df["arrivo"].notna()
+        ]
         if not df_disponibili.empty:
             primo = df_disponibili.iloc[0]
             return primo["partenza"], primo["arrivo"]
-    except Exception as e:
-        logging.error(f"Errore lettura {file_csv}: {e}")
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        logging.error("Errore lettura %s: %s", file_csv, exc)
     return None, None
 
 
@@ -56,10 +69,13 @@ def get_partenze_realtime(id_stazione):
     url = f"http://www.viaggiatreno.it/infomobilita/resteasy/viaggiatreno/partenze/{id_stazione}/{ora_str}"
     try:
         res = requests.get(url, timeout=5)
-        if res.status_code == 200:
-            return res.json()
-    except Exception as e:
-        logging.error(f"Errore API Viaggiatreno: {e}")
+        res.raise_for_status()
+        partenze = res.json()
+        if isinstance(partenze, list):
+            return partenze
+        logging.error("Risposta API non valida per la stazione %s", id_stazione)
+    except (requests.RequestException, ValueError) as exc:
+        logging.error("Errore API Viaggiatreno: %s", exc)
     return []
 
 
