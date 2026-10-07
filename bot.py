@@ -1,10 +1,10 @@
+import csv
 import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Thread
 from flask import Flask
-import pandas as pd
 import requests
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -44,22 +44,21 @@ BASE_DIR = Path(__file__).resolve().parent
 def get_prossimo_bus(file_csv, ora_riferimento):
     try:
         csv_path = BASE_DIR / file_csv
-        df = pd.read_csv(csv_path, dtype=str)
+        with csv_path.open(newline="", encoding="utf-8-sig") as csv_file:
+            rows = list(csv.DictReader(csv_file))
+
         required_columns = {"partenza", "arrivo"}
-        if not required_columns.issubset(df.columns):
-            missing = ", ".join(sorted(required_columns - set(df.columns)))
+        columns = set(rows[0]) if rows else set()
+        if not required_columns.issubset(columns):
+            missing = ", ".join(sorted(required_columns - columns))
             raise ValueError(f"colonne mancanti: {missing}")
 
-        df["partenza"] = df["partenza"].str.strip()
-        df["arrivo"] = df["arrivo"].str.strip()
-        df_disponibili = df[
-            (df["partenza"] >= ora_riferimento)
-            & df["arrivo"].notna()
-        ]
-        if not df_disponibili.empty:
-            primo = df_disponibili.iloc[0]
-            return primo["partenza"], primo["arrivo"]
-    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        for row in rows:
+            partenza = (row.get("partenza") or "").strip()
+            arrivo = (row.get("arrivo") or "").strip()
+            if partenza >= ora_riferimento and arrivo:
+                return partenza, arrivo
+    except (OSError, csv.Error, ValueError) as exc:
         logging.error("Errore lettura %s: %s", file_csv, exc)
     return None, None
 
