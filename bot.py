@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from threading import Thread
+from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -16,6 +17,9 @@ from src.bottrasporti.viaggiatreno import get_partenze_realtime
 from src.bottrasporti.web import run_web
 
 
+MESSAGGI_ATTIVI = {}
+
+
 # Logging per debug
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -26,6 +30,11 @@ logging.basicConfig(
 STAZIONE_BERGAMO = "S01701"
 STAZIONE_GRECO = "S01645"
 STAZIONE_ALBANO = "S01702"
+FUSO_ORARIO_ITALIA = ZoneInfo("Europe/Rome")
+
+
+def adesso_in_italia():
+    return datetime.now(FUSO_ORARIO_ITALIA)
 
 
 def tastiera_indietro():
@@ -52,35 +61,60 @@ def tastiera_direzione():
 
 
 def messaggio_scelta():
-    ora_attuale = datetime.now().strftime("%d/%m/%Y alle %H:%M")
+    ora_attuale = adesso_in_italia().strftime("%d/%m/%Y alle %H:%M")
     return (
-        f"🕒 Ora attuale: **{ora_attuale}**\n\n"
-        "👋 Ciao! Scegli la direzione del tuo viaggio:"
+        "🚍 *Bot Trasporti*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🕒 *Ora italiana:* `{ora_attuale}`\n\n"
+        "👋 *Ciao! Dove vuoi andare?*\n"
+        "Scegli il percorso per vedere le coincidenze disponibili:"
     )
+
+
+async def disabilita_pulsanti(message):
+    await message.edit_reply_markup(reply_markup=None)
+
+
+async def invia_scelta(message):
+    precedente = MESSAGGI_ATTIVI.get(message.chat_id)
+    if precedente and precedente[0] != message.message_id:
+        await disabilita_pulsanti(precedente[1])
+    nuovo = await message.reply_text(
+        messaggio_scelta(),
+        reply_markup=tastiera_direzione(),
+        parse_mode="Markdown",
+    )
+    MESSAGGI_ATTIVI[message.chat_id] = (nuovo.message_id, nuovo)
+
+
+async def invia_percorso(message, testo):
+    nuovo = await message.reply_text(
+        testo,
+        parse_mode="Markdown",
+        reply_markup=tastiera_indietro(),
+    )
+    MESSAGGI_ATTIVI[message.chat_id] = (nuovo.message_id, nuovo)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        messaggio_scelta(),
-        reply_markup=tastiera_direzione(),
-    )
+    await invia_scelta(update.message)
 
 
 async def gestisci_andata(update: Update):
-    ora_attuale = datetime.now().strftime("%H:%M")
+    ora_attuale = adesso_in_italia().strftime("%H:%M")
     bus_dep, bus_arr = get_prossimo_bus("data/bus_brusa_bg.csv", ora_attuale)
-    msg = "🟢 **PERCORSO DI ANDATA**\n\n"
+    msg = "🟢 *PERCORSO DI ANDATA*\n━━━━━━━━━━━━━━━━━━\n\n"
 
     if not bus_dep:
-        msg += "❌ Nessun bus disponibile da Brusaporto per oggi."
-        await update.callback_query.message.reply_text(
-            msg,
-            parse_mode="Markdown",
-            reply_markup=tastiera_indietro(),
-        )
+        msg += "❌ *Nessun autobus disponibile da Brusaporto per oggi.*"
+        await invia_percorso(update.callback_query.message, msg)
         return
 
-    msg += f"🚌 **Bus Brusaporto ➔ Bergamo**\n• Partenza: `{bus_dep}` | Arrivo Bergamo: `{bus_arr}`\n\n"
+    msg += (
+        "🚌 *Autobus Brusaporto ➔ Bergamo*\n"
+        f"   ├ Partenza: `{bus_dep}`\n"
+        f"   └ Arrivo: `{bus_arr}`\n\n"
+    )
 
     ora_minima_treno = (
         datetime.strptime(bus_arr, "%H:%M") + timedelta(minutes=7)
@@ -104,19 +138,20 @@ async def gestisci_andata(update: Update):
             or treno_trovato.get("binarioProgrammatoPartenzaDescrizione")
             or "-"
         )
-        msg += f"🚆 **Treno Bergamo ➔ Milano**\n• {tipo} {num} delle `{treno_trovato.get('orarioPartenzaStr')}`\n• Stato: **{ritardo} min di ritardo** | Binario: `{binario}`\n"
+        msg += (
+            "🚆 *Treno Bergamo ➔ Milano*\n"
+            f"   ├ {tipo} {num} — partenza `{treno_trovato.get('orarioPartenzaStr')}`\n"
+            f"   ├ Ritardo: *{ritardo} min*\n"
+            f"   └ Binario: `{binario}`\n"
+        )
     else:
-        msg += "⚠️ Nessun treno per Milano trovato in tempo utile dopo il bus."
+        msg += "⚠️ *Nessun treno per Milano trovato in tempo utile.*"
 
-    await update.callback_query.message.reply_text(
-        msg,
-        parse_mode="Markdown",
-        reply_markup=tastiera_indietro(),
-    )
+    await invia_percorso(update.callback_query.message, msg)
 
 
 async def gestisci_ritorno(update: Update):
-    ora_attuale = datetime.now().strftime("%H:%M")
+    ora_attuale = adesso_in_italia().strftime("%H:%M")
     partenze_greco = get_partenze_realtime(STAZIONE_GRECO)
 
     treno_ritorno = None
@@ -127,17 +162,13 @@ async def gestisci_ritorno(update: Update):
                 treno_ritorno = t
                 break
 
-    msg = "🔴 **PERCORSO DI RITORNO**\n\n"
+    msg = "🔴 *PERCORSO DI RITORNO*\n━━━━━━━━━━━━━━━━━━\n\n"
 
     if not treno_ritorno:
         msg += (
-            "❌ Nessun treno diretto a Bergamo trovato in partenza da Greco."
+            "❌ *Nessun treno diretto a Bergamo trovato da Greco.*"
         )
-        await update.callback_query.message.reply_text(
-            msg,
-            parse_mode="Markdown",
-            reply_markup=tastiera_indietro(),
-        )
+        await invia_percorso(update.callback_query.message, msg)
         return
 
     ritardo = treno_ritorno.get("ritardo", 0)
@@ -147,7 +178,15 @@ async def gestisci_ritorno(update: Update):
     ora_arrivo_bg_dt = ora_partenza_dt + timedelta(minutes=40 + ritardo)
     ora_arrivo_bg_str = ora_arrivo_bg_dt.strftime("%H:%M")
 
-    msg += f"🚆 **Treno Milano Greco ➔ Bergamo**\n• {treno_ritorno.get('compTipologiaTreno', 'Treno')} {treno_ritorno.get('numeroTreno')} delle `{ora_partenza_str}`\n• Ritardo attuale: **{ritardo} min**\n• Arrivo stimato a Bergamo: `{ora_arrivo_bg_str}`\n\n🔀 **OPZIONI DA BERGAMO PER CASA:**\n\n"
+    msg += (
+        "🚆 *Treno Milano Greco ➔ Bergamo*\n"
+        f"   ├ {treno_ritorno.get('compTipologiaTreno', 'Treno')} "
+        f"{treno_ritorno.get('numeroTreno')} — partenza `{ora_partenza_str}`\n"
+        f"   ├ Ritardo: *{ritardo} min*\n"
+        f"   └ Arrivo stimato: `{ora_arrivo_bg_str}`\n\n"
+        "🏠 *DA BERGAMO A CASA*\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+    )
 
     # Opzione A: Treno
     partenze_bg = get_partenze_realtime(STAZIONE_BERGAMO)
@@ -166,13 +205,17 @@ async def gestisci_ritorno(update: Update):
         differenza_minuti = int(
             (ora_alb_dt - ora_arrivo_bg_dt).total_seconds() / 60
         )
-        msg += f"1️⃣ **Treno Bergamo ➔ Albano:**\n   • Partenza: `{treno_albano.get('orarioPartenzaStr')}` (Margine: **{differenza_minuti} min**)\n"
+        msg += (
+            "1️⃣ *Treno Bergamo ➔ Albano*\n"
+            f"   └ Partenza: `{treno_albano.get('orarioPartenzaStr')}` "
+            f"(margine: *{differenza_minuti} min*)\n"
+        )
         if differenza_minuti >= 10:
-            msg += "   • ✅ **Fattibile!** 🚗 *Fatti venire a prendere ad Albano.*\n"
+            msg += "   ✅ *Fattibile!* 🚗 Fatti venire a prendere ad Albano.\n"
         else:
-            msg += "   • ❌ **Sconsigliato:** hai meno di 10 minuti per il cambio binario.\n"
+            msg += "   ❌ *Sconsigliato:* meno di 10 minuti per il cambio binario.\n"
     else:
-        msg += "1️⃣ **Treno per Albano:** Nessun treno in coincidenza.\n"
+        msg += "1️⃣ *Treno per Albano:* nessuna coincidenza disponibile.\n"
 
     msg += "\n"
 
@@ -180,35 +223,42 @@ async def gestisci_ritorno(update: Update):
     ora_min_bus = (ora_arrivo_bg_dt + timedelta(minutes=5)).strftime("%H:%M")
     b_dep, b_arr = get_prossimo_bus("data/bus_bg_brusa.csv", ora_min_bus)
     if b_dep:
-        msg += f"2️⃣ **Bus Bergamo ➔ Brusaporto:**\n   • Partenza ore `{b_dep}` (Arrivo Brusa: `{b_arr}`)\n\n"
+        msg += (
+            f"2️⃣ *Autobus Bergamo ➔ Brusaporto*\n"
+            f"   └ Partenza: `{b_dep}` · Arrivo: `{b_arr}`\n\n"
+        )
     else:
-        msg += "2️⃣ **Bus per Brusaporto:** Nessun bus disponibile.\n\n"
+        msg += "2️⃣ *Autobus per Brusaporto:* nessuna corsa disponibile.\n\n"
 
     a_dep, a_arr = get_prossimo_bus("data/bus_bg_albano.csv", ora_min_bus)
     if a_dep:
-        msg += f"3️⃣ **Bus Bergamo ➔ Albano:**\n   • Partenza ore `{a_dep}` (Arrivo Albano: `{a_arr}`) 🚗 *Fatti prendere ad Albano.*\n"
+        msg += (
+            f"3️⃣ *Autobus Bergamo ➔ Albano*\n"
+            f"   └ Partenza: `{a_dep}` · Arrivo: `{a_arr}`\n"
+            "   🚗 Fatti venire a prendere ad Albano.\n"
+        )
     else:
-        msg += "3️⃣ **Bus per Albano:** Nessun bus disponibile.\n"
+        msg += "3️⃣ *Autobus per Albano:* nessuna corsa disponibile.\n"
 
-    await update.callback_query.message.reply_text(
-        msg,
-        parse_mode="Markdown",
-        reply_markup=tastiera_indietro(),
-    )
+    await invia_percorso(update.callback_query.message, msg)
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    messaggio_attivo = MESSAGGI_ATTIVI.get(query.message.chat_id)
+    if not messaggio_attivo or messaggio_attivo[0] != query.message.message_id:
+        await disabilita_pulsanti(query.message)
+        await query.answer("Questo menu non è più attivo.", show_alert=True)
+        return
+
     await query.answer()
+    await disabilita_pulsanti(query.message)
     if query.data == "andata":
         await gestisci_andata(update)
     elif query.data == "ritorno":
         await gestisci_ritorno(update)
     elif query.data == "indietro":
-        await query.message.reply_text(
-            messaggio_scelta(),
-            reply_markup=tastiera_direzione(),
-        )
+        await invia_scelta(query.message)
 
 
 if __name__ == "__main__":

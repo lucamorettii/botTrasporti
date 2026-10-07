@@ -1,14 +1,16 @@
 import csv
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+ITALY_TIMEZONE = ZoneInfo("Europe/Rome")
 
 
 def get_prossimo_bus(file_csv, ora_riferimento, giorno=None):
-    giorno = giorno or date.today()
+    giorno = giorno or datetime.now(ITALY_TIMEZONE).date()
     giorno_codice = str(giorno.isoweekday())
     try:
         csv_path = PROJECT_ROOT / file_csv
