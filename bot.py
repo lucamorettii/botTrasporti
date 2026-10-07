@@ -28,8 +28,8 @@ logging.basicConfig(
 )
 
 # Codici Stazione Viaggiatreno
-STAZIONE_BERGAMO = "S01701"
-STAZIONE_GRECO = "S01645"
+STAZIONE_BERGAMO = "S01529"
+STAZIONE_GRECO = "S01326"
 STAZIONE_ALBANO = "S01702"
 FUSO_ORARIO_ITALIA = ZoneInfo("Europe/Rome")
 
@@ -240,10 +240,6 @@ async def gestisci_ritorno(update: Update):
             f"   └ Partenza: `{orario_partenza(treno_albano)}` "
             f"(margine: *{differenza_minuti} min*)\n"
         )
-        if differenza_minuti >= 10:
-            msg += "   ✅ *Fattibile!* 🚗 Fatti venire a prendere ad Albano.\n"
-        else:
-            msg += "   ❌ *Sconsigliato:* meno di 10 minuti per il cambio binario.\n"
     else:
         msg += "1️⃣ *Treno per Albano:* nessuna coincidenza disponibile.\n"
 
@@ -265,7 +261,6 @@ async def gestisci_ritorno(update: Update):
         msg += (
             f"3️⃣ *Autobus Bergamo ➔ Albano*\n"
             f"   └ Partenza: `{a_dep}` · Arrivo: `{a_arr}`\n"
-            "   🚗 Fatti venire a prendere ad Albano.\n"
         )
     else:
         msg += "3️⃣ *Autobus per Albano:* nessuna corsa disponibile.\n"
