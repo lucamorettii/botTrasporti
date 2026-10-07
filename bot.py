@@ -38,6 +38,25 @@ def adesso_in_italia():
     return datetime.now(FUSO_ORARIO_ITALIA)
 
 
+def orario_partenza(treno):
+    orario = treno.get("orarioPartenzaStr")
+    if orario:
+        return orario
+
+    timestamp = treno.get("partenzaTreno") or treno.get("orarioPartenza")
+    if timestamp is not None:
+        return datetime.fromtimestamp(
+            int(timestamp) / 1000,
+            FUSO_ORARIO_ITALIA,
+        ).strftime("%H:%M")
+    return ""
+
+
+def minuti_da_mezzanotte(orario):
+    ore, minuti = (int(valore) for valore in orario.split(":"))
+    return ore * 60 + minuti
+
+
 def tastiera_indietro():
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("⬅️ Indietro", callback_data="indietro")]]
@@ -126,7 +145,9 @@ async def gestisci_andata(update: Update):
     for t in partenze_bg:
         dest = t.get("destinazione", "").upper()
         if "MILANO" in dest or "GRECO" in dest:
-            if t.get("orarioPartenzaStr", "") >= ora_minima_treno:
+            if minuti_da_mezzanotte(orario_partenza(t)) >= minuti_da_mezzanotte(
+                ora_minima_treno
+            ):
                 treno_trovato = t
                 break
 
@@ -139,9 +160,10 @@ async def gestisci_andata(update: Update):
             or treno_trovato.get("binarioProgrammatoPartenzaDescrizione")
             or "-"
         )
+        orario_treno = orario_partenza(treno_trovato)
         msg += (
             "🚆 *Treno Bergamo ➔ Milano*\n"
-            f"   ├ {tipo} {num} — partenza `{treno_trovato.get('orarioPartenzaStr')}`\n"
+            f"   ├ {tipo} {num} — partenza `{orario_treno}`\n"
             f"   ├ Ritardo: *{ritardo} min*\n"
             f"   └ Binario: `{binario}`\n"
         )
@@ -158,8 +180,13 @@ async def gestisci_ritorno(update: Update):
     treno_ritorno = None
     for t in partenze_greco:
         dest = t.get("destinazione", "").upper()
-        if "BERGAMO" in dest:
-            if t.get("orarioPartenzaStr", "") >= ora_attuale:
+        if any(
+            destinazione in dest
+            for destinazione in ("BERGAMO", "PONTE S.PIETRO", "VERDELLO")
+        ):
+            if minuti_da_mezzanotte(orario_partenza(t)) >= minuti_da_mezzanotte(
+                ora_attuale
+            ):
                 treno_ritorno = t
                 break
 
@@ -173,7 +200,7 @@ async def gestisci_ritorno(update: Update):
         return
 
     ritardo = treno_ritorno.get("ritardo", 0)
-    ora_partenza_str = treno_ritorno.get("orarioPartenzaStr", "18:00")
+    ora_partenza_str = orario_partenza(treno_ritorno) or "18:00"
 
     ora_partenza_dt = datetime.strptime(ora_partenza_str, "%H:%M")
     ora_arrivo_bg_dt = ora_partenza_dt + timedelta(minutes=40 + ritardo)
@@ -194,21 +221,23 @@ async def gestisci_ritorno(update: Update):
     treno_albano = None
     for t in partenze_bg:
         dest = t.get("destinazione", "").upper()
-        if "VERONA" in dest or "BRESCIA" in dest or "ALBANO" in dest:
-            if t.get("orarioPartenzaStr", "") >= ora_arrivo_bg_str:
+        if any(destinazione in dest for destinazione in ("VERONA", "BRESCIA", "ALBANO")):
+            if minuti_da_mezzanotte(orario_partenza(t)) >= minuti_da_mezzanotte(
+                ora_arrivo_bg_str
+            ):
                 treno_albano = t
                 break
 
     if treno_albano:
         ora_alb_dt = datetime.strptime(
-            treno_albano.get("orarioPartenzaStr"), "%H:%M"
+            orario_partenza(treno_albano), "%H:%M"
         )
         differenza_minuti = int(
             (ora_alb_dt - ora_arrivo_bg_dt).total_seconds() / 60
         )
         msg += (
             "1️⃣ *Treno Bergamo ➔ Albano*\n"
-            f"   └ Partenza: `{treno_albano.get('orarioPartenzaStr')}` "
+            f"   └ Partenza: `{orario_partenza(treno_albano)}` "
             f"(margine: *{differenza_minuti} min*)\n"
         )
         if differenza_minuti >= 10:
